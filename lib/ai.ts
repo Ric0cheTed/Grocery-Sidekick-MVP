@@ -1,5 +1,19 @@
 import OpenAI from 'openai'
 import { z } from 'zod'
+// ---- Types for plan generation ----
+export type Ingredient = {
+  name: string;
+  quantity: number;
+  unit: string;
+  section: string;
+};
+
+export type MockMeal = {
+  title: string;
+  slot: 'breakfast' | 'lunch' | 'dinner';
+  ingredients: Ingredient[];
+};
+
 
 export const Ingredient = z.object({
   name: z.string(),
@@ -39,7 +53,7 @@ export const PlanOutput = z.object({
 })
 
 const mockPlan = (): z.infer<typeof PlanOutput> => {
-  const meals = [
+  const meals: MockMeal[] = [
     { title: 'Greek Yogurt & Berries', slot: 'breakfast',
       ingredients:[{name:'Greek yogurt',quantity:500,unit:'g',section:'Dairy'},{name:'Mixed berries',quantity:300,unit:'g',section:'Produce'},{name:'Honey',quantity:2,unit:'tbsp',section:'Grocery'}],
       steps:['Spoon yogurt','Top with berries','Drizzle honey'],
@@ -55,11 +69,11 @@ const mockPlan = (): z.infer<typeof PlanOutput> => {
       steps:['Preheat oven to 200C','Toss veg with oil','Bake veg 15m','Add salmon 12m'],
       nutrition:{calories:650,protein:40,carbs:55,fat:25},
       prep_time_min:10,cook_time_min:27},
-  ] as const
+  ]
 
   const days = Array.from({length:7},(_,i)=>({day:i+1 as 1|2|3|4|5|6|7, meals: meals as any}))
   const totals = { calories: (400+550+650), protein: (25+45+40), carbs:(45+50+55), fat:(10+18+25) }
-  const shopping = meals.flatMap(m=>m.ingredients)
+  const shopping: Ingredient[] = meals.flatMap(m=>m.ingredients)
   return { week_start: new Date().toISOString().slice(0,10), days, totals, shopping_list: shopping }
 }
 
