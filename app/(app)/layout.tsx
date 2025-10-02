@@ -12,7 +12,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <Link href="/plans" className="btn">My Plans</Link>
           </li>
           <li>
-            <Link href="/account" className="btn">Account</Link>
+            <Link href="/plans" className="btn">Account</Link>
           </li>
 
           {/* spacer pushes the CTA to the right */}
