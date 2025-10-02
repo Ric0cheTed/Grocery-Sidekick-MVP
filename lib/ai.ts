@@ -92,3 +92,5 @@ export async function structuredPlan(_opts: any): Promise<StructuredPlan> {
     shopping_list: shopping,
   };
 }
+
+export type PlanOutput = StructuredPlan;
