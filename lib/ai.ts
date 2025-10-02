@@ -80,7 +80,9 @@ export async function structuredPlan(_opts: any): Promise<StructuredPlan> {
   };
 
   // Explicitly typed flatten so TS widens to Ingredient[]
-  const shopping: Ingredient[] = meals.flatMap((m) => m.ingredients);
+  const shopping: Ingredient[] = meals.flatMap<Ingredient>(
+    (m) => (m.ingredients as unknown as Ingredient[])
+  );
 
   return {
     week_start: new Date().toISOString().slice(0, 10),
