@@ -1,5 +1,4 @@
 'use client';
-
 import { useCallback, useEffect, useState } from 'react';
 
 type Meal = {
@@ -13,8 +12,8 @@ type Meal = {
 
 export default function MealsPage() {
   const [type, setType] = useState<string>('all');
-  const [tag, setTag] = useState<string>('');          // draft text input
-  const [appliedTag, setAppliedTag] = useState('');    // actually used in queries
+  const [tagDraft, setTagDraft] = useState('');      // typing buffer
+  const [tag, setTag] = useState('');                // applied filter
   const [loading, setLoading] = useState(false);
   const [meals, setMeals] = useState<Meal[]>([]);
 
@@ -22,36 +21,34 @@ export default function MealsPage() {
     setLoading(true);
     const qs = new URLSearchParams();
     if (type !== 'all') qs.set('type', type);
-    if (appliedTag.trim()) qs.append('tag', appliedTag.trim());
-    const res = await fetch(`/api/meals?${qs.toString()}`);
+    if (tag.trim()) qs.append('tag', tag.trim());
+    const res = await fetch(`/api/meals?${qs.toString()}`, { cache: 'no-store' });
     const json = await res.json();
     setMeals(json.meals || []);
     setLoading(false);
-  }, [type, appliedTag]); // <-- only recompute when type or appliedTag changes
+  }, [type, tag]); // <= only re-create when filters change
 
-  // initial + whenever 'load' changes (i.e., type or appliedTag)
   useEffect(() => {
+    // run on first render and when filters (via `load`) change
     load();
   }, [load]);
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this meal?')) return;
-    const res = await fetch(`/api/meals/${id}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const j = await res.json().catch(() => null);
+    const r = await fetch(`/api/meals/${id}`, { method: 'DELETE' });
+    if (!r.ok) {
+      const j = await r.json().catch(() => null);
       alert(j?.error || 'Delete failed');
       return;
     }
-    await load(); // uses stable, up-to-date filters
+    load();
   }
 
   return (
     <main className="p-6 grid gap-6">
       <header className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Meals</h1>
-        <a href="/meals/new" className="rounded-md border px-3 py-1.5 border-lime-500 hover:bg-lime-500/10">
-          + New Meal
-        </a>
+        <a href="/meals/new" className="rounded-md border px-3 py-1.5 border-lime-500 hover:bg-lime-500/10">+ New Meal</a>
       </header>
 
       <section className="rounded-lg border border-neutral-800 p-3 flex flex-wrap gap-3 items-end">
@@ -75,15 +72,12 @@ export default function MealsPage() {
           <input
             className="rounded-md border border-neutral-700 bg-transparent px-3 py-2"
             placeholder="e.g. high-protein"
-            value={tag}
-            onChange={(e) => setTag(e.target.value)}
+            value={tagDraft}
+            onChange={(e) => setTagDraft(e.target.value)}
           />
         </label>
 
-        <button
-          onClick={() => setAppliedTag(tag)} // <- apply tag when clicked
-          className="rounded-md border px-3 py-2 border-neutral-700 hover:bg-neutral-800"
-        >
+        <button onClick={() => setTag(tagDraft)} className="rounded-md border px-3 py-2 border-neutral-700 hover:bg-neutral-800">
           Apply
         </button>
 
@@ -102,12 +96,10 @@ export default function MealsPage() {
             <div>
               <div className="font-medium">{m.title}</div>
               <div className="text-xs opacity-70">
-                {m.meal_type} · {m.calories ?? 0} kcal
-                {m.tags?.length ? ` · ${m.tags.join(', ')}` : ''}
+                {m.meal_type} · {m.calories ?? 0} kcal{m.tags?.length ? ` · ${m.tags.join(', ')}` : ''}
               </div>
             </div>
             <div className="flex gap-2">
-              {/* placeholder for future edit */}
               <button
                 onClick={() => handleDelete(m.id)}
                 className="text-sm rounded-md border px-3 py-1.5 border-red-600 hover:bg-red-600/10"
