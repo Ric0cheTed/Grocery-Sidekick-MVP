@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0b0d10;
+  --fg: #e5e7eb;
+  --acc: #84cc16;
+}
+html, body { height: 100%; }
+body { color: var(--fg); background: var(--bg); }
+a { color: var(--acc); }
+.btn {
+  @apply px-4 py-2 rounded-2xl shadow text-sm font-medium bg-neutral-800 hover:bg-neutral-700 transition;
+}
+.btn-acc { @apply bg-lime-500 text-black hover:bg-lime-400; }
+.card { @apply bg-neutral-900 border border-neutral-800 rounded-2xl p-4 shadow; }
+h1 { @apply text-2xl font-semibold; }
+h2 { @apply text-xl font-semibold; }
+label { @apply text-sm text-neutral-300; }
+input, select, textarea { @apply bg-neutral-800 rounded-lg px-3 py-2 w-full outline-none focus:ring-2 focus:ring-lime-500; }

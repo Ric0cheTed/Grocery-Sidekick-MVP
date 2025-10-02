@@ -1,0 +1,6 @@
+Add the following dependency and reinstall:
+
+  npm i @supabase/ssr
+
+If you prefer to edit package.json manually, ensure this exists in "dependencies":
+  "@supabase/ssr": "^0.4.0"

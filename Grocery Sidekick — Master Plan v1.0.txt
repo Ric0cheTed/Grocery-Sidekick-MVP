@@ -1,0 +1,216 @@
+# Grocery Sidekick — Master Plan v1.0
+
+**Goal:** Ship the best consumer meal-planning + smart shopping SaaS for the UK, with a crisp MVP in weeks and a scale-ready path to Pro features.
+
+---
+
+## 0) Project Operating Model
+
+* **Single Source of Truth:** This chat thread + this plan. We’ll update this doc as we iterate.
+* **Work Rhythm:** Weekly Ops Sync (Friday). Each sync includes: tested ZIP, change log, consistency report, next‑move list.
+* **Branches:** `main` (stable), `dev` (active), feature branches per ticket.
+* **Envs:** `local` → `preview` (Vercel PRs) → `prod`.
+
+---
+
+## 1) Product Vision & Positioning
+
+* **Promise:** “One-click weekly meal plans that fit your diet, goals, and UK supermarkets—plus a shopping list that just works.”
+* **Audience:** UK families, students, time-poor professionals, gym-goers. (Later: diabetics, low‑FODMAP, halal/kosher filters.)
+* **Differentiators:**
+
+  1. UK‑centric ingredients/sections (Produce/Bakery/Dairy etc.)
+  2. Budget‑aware & servings‑aware planning
+  3. Lock & re‑roll UX, not just regenerate all
+  4. Exports (PDF/CSV) + weekly auto‑email
+
+---
+
+## 2) Feature Tiers
+
+### MVP (Launch)
+
+* Sign up (Supabase magic link)
+* Preferences: calories/macros (optional), diet tags, excludes, budget, servings
+* Generate 7‑day plan (AI → strict JSON)
+* Lock/re‑roll meals per day
+* Smart Shopping List (grouped, deduped, quantities)
+* Save plan, view history
+* Export CSV + PDF
+* Free vs Pro quota (3/month free; unlimited on Pro)
+
+### Pro (Month 2–3)
+
+* Weekly auto‑plan via CRON + email
+* Macro targets & nutrient summaries
+* Branded email delivery + calendar reminders
+* Templates (favourite meals, speed‑cook sets)
+* Family profiles (2–5 profiles, shared lists)
+
+### Later (Month 4+)
+
+* Supermarket basket estimations (Tesco/Sainsbury’s APIs or scraper proxy)
+* Pantry tracking + “use‑up” planning
+* Mobile app shell (Next.js + PWA → React Native later)
+
+---
+
+## 3) Architecture (Clean & Modular)
+
+* **Next.js 14 (App Router) + TypeScript + Tailwind** on Vercel
+* **Supabase** (Postgres, RLS, Auth)
+* **OpenAI** (JSON‑strict prompt), pluggable provider
+* **Stripe** (Checkout + Billing + Stripe Tax)
+* **Resend** emails, **PostHog** analytics
+
+```
+apps/web
+  /app
+    /(marketing) -> landing, pricing
+    /(app)       -> auth‑gated
+      /dashboard, /plans, /plan/[id], /account
+    /api
+      /generate (POST)
+      /stripe/webhook (POST)
+      /cron/weekly (GET)
+  /lib   -> db, dbAdmin, ai, shopping, usage, stripe
+  /types -> zod schemas & TS types
+```
+
+---
+
+## 4) Data Model (Supabase)
+
+* `profiles(id, full_name, avatar_url)`
+* `subscriptions(user_id, status, stripe_ids, current_period_end)`
+* `preferences(user_id, calories_target, macro targets, diet_tags[], exclude_ingredients[], budget, servings)`
+* `meal_plans(id, user_id, week_start, summary)`
+* `meals(id, plan_id, day 1–7, slot, title, recipe_json, locked)`
+* `shopping_items(id, plan_id, name, quantity, unit, section, estimated_price, acquired)`
+* `usage_counters(user_id, month, plans_generated)`
+* **RLS:** owner‑only; meals/items guarded via `exists(select 1 from meal_plans...)`.
+
+---
+
+## 5) Security & Compliance
+
+* RLS enabled on all tables (policies shipped)
+* JWT-based auth; no public PII in logs
+* Privacy Policy, Terms, cookie banner (analytics)
+* Account deletion + data export endpoints
+* Stripe Tax for GB VAT
+
+---
+
+## 6) UX Pillars
+
+* 3‑clicks to first value: Dashboard → Generate Week → View Plan
+* Lock & re‑roll inline per meal
+* Clear sections in Shopping List (Produce, Bakery, Dairy, Frozen, Canned, Grocery)
+* Export buttons top‑right; copy‑to‑clipboard for mobiles
+* Empty states + helpful defaults
+
+---
+
+## 7) Analytics & Metrics
+
+* **Activation:** % of new users generating a plan in first session
+* **Time‑to‑Value:** seconds from sign‑up to plan shown
+* **Retention:** 7/30‑day returning users
+* **Conversion:** Free→Pro; plans per active user
+* **Quality:** % re‑roll actions, ingredient corrections
+
+---
+
+## 8) Delivery Roadmap (Milestones)
+
+**M0 – Today (Bootstrap)**
+
+* Run starter locally, confirm mock plan end‑to‑end
+* Create GitHub repo; push starter; connect Vercel
+
+**M1 – Persistence & Auth (1–2 days)**
+
+* Add Supabase keys
+* Replace in‑memory store with DB writes/reads
+* Magic link auth; gate `(app)` routes
+* `/app/plans` lists saved plans; `/app/plan/[id]` reads from DB
+
+**M2 – Exports & Quotas (1–2 days)**
+
+* CSV + PDF export utilities
+* Free vs Pro quotas via `usage_counters`
+
+**M3 – Billing (2–3 days)**
+
+* Pricing page → Stripe Checkout → webhook → `subscriptions.status=pro`
+* Billing portal link in `/app/account`
+
+**M4 – Weekly Auto‑Plan (1 day)**
+
+* Vercel Cron `GET /api/cron/weekly?key=`
+* Resend email delivery with plan link
+
+**M5 – Polish & Launch (2–3 days)**
+
+* Settings/preferences UI, better loading states
+* Marketing site copy & screenshots
+* Privacy/Terms pages; cookie banner; lighthouse pass
+
+---
+
+## 9) Ticket Backlog (Initial)
+
+1. Wire Supabase persistence in `/api/generate` (insert plan/meals/items)
+2. Auth guard for `(app)` routes; profile row on first login
+3. Plans list page (pagination by created_at)
+4. Plan page: lock & re‑roll (update one meal via AI, re‑dedupe shopping list)
+5. Export CSV/PDF
+6. Quota check before generation (free: 3/mo)
+7. Stripe checkout + webhook + billing portal
+8. CRON weekly generator for Pro users
+9. Email template (Resend) with plan summary & CTA
+10. Analytics events (PostHog): signup, generate, export, upgrade
+
+---
+
+## 10) Engineering Notes
+
+* AI contract enforced via Zod; fallback to mock if JSON invalid
+* Shopping list assembly is pure function → unit test
+* Strict TypeScript & ESLint; small components; server actions where suitable
+* Secrets: `.env.local` for dev; Vercel envs for preview/prod
+
+---
+
+## 11) Launch Checklist
+
+* [ ] Smoke tests on preview
+* [ ] Stripe live keys + webhook live
+* [ ] Legal pages + footer links
+* [ ] Monitoring: Vercel, PostHog dashboard
+* [ ] First 20 beta invites sent
+
+---
+
+## 12) Pricing & Packaging (v1)
+
+* **Free**: 3 plans/mo, in‑app list
+* **Pro £6.99/mo**: unlimited, exports, weekly auto‑plan, email delivery
+* Optional 7‑day trial
+
+---
+
+## 13) Growth Plan (First 4 Weeks)
+
+* TikTok/YT Shorts: recipes from generated plans; CTA to app
+* Reddit/FB groups (budget meal prep, student cooking) with helpful posts
+* Partner with one UK nutrition influencer for a “Sidekick Template Pack”
+
+---
+
+## 14) Next Immediate Actions
+
+1. Upload your **current ZIPs** (frontend + any changes you made) to this chat.
+2. I’ll produce a **Consistency Report** + a **drop‑in persistence patch**.
+3. We push to GitHub & wire Vercel → you’ll have a shareable preview URL.
