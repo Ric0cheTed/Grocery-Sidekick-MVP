@@ -2,6 +2,9 @@
   "name": "grocery-sidekick",
   "private": true,
   "version": "0.1.0",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,9 +12,6 @@
     "lint": "next lint",
     "postinstall": "echo 'Ready to go. Run: npm run dev'"
   },
-  "engines": {
-    "node": "20.x"
-  }
   "dependencies": {
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.45.0",
