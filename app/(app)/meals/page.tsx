@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 type Meal = {
   id: string;
@@ -13,23 +13,26 @@ type Meal = {
 
 export default function MealsPage() {
   const [type, setType] = useState<string>('all');
-  const [tag, setTag] = useState<string>('');
+  const [tag, setTag] = useState<string>('');          // draft text input
+  const [appliedTag, setAppliedTag] = useState('');    // actually used in queries
   const [loading, setLoading] = useState(false);
   const [meals, setMeals] = useState<Meal[]>([]);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     const qs = new URLSearchParams();
     if (type !== 'all') qs.set('type', type);
-    if (tag.trim()) qs.append('tag', tag.trim());
+    if (appliedTag.trim()) qs.append('tag', appliedTag.trim());
     const res = await fetch(`/api/meals?${qs.toString()}`);
     const json = await res.json();
     setMeals(json.meals || []);
     setLoading(false);
-  }
+  }, [type, appliedTag]); // <-- only recompute when type or appliedTag changes
 
-  useEffect(() => { load(); }, []); // initial
-  useEffect(() => { load(); }, [type]); // refetch on type change
+  // initial + whenever 'load' changes (i.e., type or appliedTag)
+  useEffect(() => {
+    load();
+  }, [load]);
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this meal?')) return;
@@ -39,7 +42,7 @@ export default function MealsPage() {
       alert(j?.error || 'Delete failed');
       return;
     }
-    await load();
+    await load(); // uses stable, up-to-date filters
   }
 
   return (
@@ -78,7 +81,7 @@ export default function MealsPage() {
         </label>
 
         <button
-          onClick={load}
+          onClick={() => setAppliedTag(tag)} // <- apply tag when clicked
           className="rounded-md border px-3 py-2 border-neutral-700 hover:bg-neutral-800"
         >
           Apply
