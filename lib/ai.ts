@@ -13,7 +13,7 @@ export type MealSlot = 'breakfast' | 'lunch' | 'dinner';
 export type MockMeal = {
   title: string;
   slot: MealSlot;
-  ingredients: Ingredient[]; // NOTE: array (not readonly tuple)
+  ingredients: Ingredient[]; // important: WIDE array, not a readonly tuple
 };
 
 export type DayPlan = {
@@ -34,7 +34,8 @@ export type StructuredPlan = {
 };
 
 // ---------- Mock plan generator (safe typings) ----------
-// No `as const` anywhere — that’s what causes the readonly literal tuple unions.
+// NOTE: No `as const` on ingredient arrays.
+// The `satisfies Ingredient[]` ensures TS widens each ingredient array.
 export async function structuredPlan(_opts: any): Promise<StructuredPlan> {
   const meals: MockMeal[] = [
     {
@@ -44,7 +45,7 @@ export async function structuredPlan(_opts: any): Promise<StructuredPlan> {
         { name: 'Greek yogurt', quantity: 500, unit: 'g', section: 'Dairy' },
         { name: 'Mixed berries', quantity: 300, unit: 'g', section: 'Produce' },
         { name: 'Honey', quantity: 50, unit: 'g', section: 'Pantry' },
-      ],
+      ] satisfies Ingredient[],
     },
     {
       title: 'Chicken wraps',
@@ -54,7 +55,7 @@ export async function structuredPlan(_opts: any): Promise<StructuredPlan> {
         { name: 'Tortilla wraps', quantity: 6, unit: 'pcs', section: 'Bakery' },
         { name: 'Lettuce', quantity: 1, unit: 'head', section: 'Produce' },
         { name: 'Yogurt dressing', quantity: 100, unit: 'g', section: 'Dairy' },
-      ],
+      ] satisfies Ingredient[],
     },
     {
       title: 'Salmon & rice',
@@ -63,13 +64,13 @@ export async function structuredPlan(_opts: any): Promise<StructuredPlan> {
         { name: 'Salmon fillets', quantity: 2, unit: 'pcs', section: 'Fish' },
         { name: 'Rice', quantity: 200, unit: 'g', section: 'Pantry' },
         { name: 'Asparagus', quantity: 250, unit: 'g', section: 'Produce' },
-      ],
+      ] satisfies Ingredient[],
     },
   ];
 
   const days: DayPlan[] = Array.from({ length: 7 }, (_, i) => ({
     day: (i + 1) as DayPlan['day'],
-    meals, // same mock meals each day
+    meals,
   }));
 
   const totals = {
@@ -79,9 +80,9 @@ export async function structuredPlan(_opts: any): Promise<StructuredPlan> {
     fat: 10 + 18 + 25,
   };
 
-  // Explicitly typed flatten so TS widens to Ingredient[]
+  // Explicitly typed flatten so TS returns Ingredient[]
   const shopping: Ingredient[] = meals.flatMap<Ingredient>(
-    (m) => (m.ingredients as unknown as Ingredient[])
+    (m) => m.ingredients as Ingredient[]
   );
 
   return {
