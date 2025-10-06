@@ -109,24 +109,30 @@ export async function POST(req: Request) {
 
   // -------- Insert plan_items (with DATE "day") --------
   const items = (plan.shopping_list ?? []).map((i: any) => {
-    const rawDay = i?.day
-    const offset = typeof rawDay === 'number' && rawDay >= 1 && rawDay <= 7 ? rawDay - 1 : 0
-    const dayISO = toISODate(addDaysUTC(start, offset))
+  // decide the day: if the item carries a day number (1..7) use it, else offset 0
+  const rawDay = i?.day
+  const offset = typeof rawDay === 'number' && rawDay >= 1 && rawDay <= 7 ? rawDay - 1 : 0
+  const dayISO = toISODate(addDaysUTC(start, offset))
 
-    return {
-      plan_id: planRow.id,
-      name: String(i?.name ?? '').slice(0, 200),
-      quantity: Number.isFinite(Number(i?.quantity)) ? Number(i.quantity) : 0,
-      unit: i?.unit != null ? String(i.unit).slice(0, 50) : null,
-      section: i?.section != null ? String(i.section).slice(0, 50) : null,
-      day: dayISO, // DATE column satisfied
-    }
-  })
+  // try to infer meal_type from the item or fall back to a default
+  // many structures name it as meal_type / slot / type
+  const mealType = normalizeMealType(i?.meal_type ?? i?.slot ?? i?.type)
 
-  if (items.length) {
-    const { error: e2 } = await supabase.from('plan_items').insert(items)
-    if (e2) return fail('insert_plan_items_failed', e2)
+  return {
+    plan_id: planRow.id,
+    name: String(i?.name ?? '').slice(0, 200),
+    quantity: Number.isFinite(Number(i?.quantity)) ? Number(i.quantity) : 0,
+    unit: i?.unit != null ? String(i.unit).slice(0, 50) : null,
+    section: i?.section != null ? String(i.section).slice(0, 50) : null,
+    day: dayISO,            // <-- DATE column (NOT NULL)
+    meal_type: mealType,    // <-- satisfies NOT NULL
   }
+})
+
+if (items.length) {
+  const { error: e2 } = await supabase.from('plan_items').insert(items)
+  if (e2) return fail('insert_plan_items_failed', e2)
+}
 
   // -------- Increment usage if tracked --------
   if (trackUsage) {
@@ -139,4 +145,10 @@ export async function POST(req: Request) {
   }
 
   return ok({ ok: true, id: planRow.id })
+}
+
+function normalizeMealType(mt: any): 'breakfast' | 'lunch' | 'dinner' | 'snack' {
+  const s = String(mt ?? '').trim().toLowerCase()
+  if (s === 'breakfast' || s === 'lunch' || s === 'dinner' || s === 'snack') return s
+  return 'dinner' // safe default to satisfy NOT NULL
 }
