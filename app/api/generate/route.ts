@@ -109,14 +109,18 @@ export async function POST(req: Request) {
 
   // -------- Insert plan_items (with DATE "day") --------
   const items = (plan.shopping_list ?? []).map((i: any) => {
-  // decide the day: if the item carries a day number (1..7) use it, else offset 0
   const rawDay = i?.day
   const offset = typeof rawDay === 'number' && rawDay >= 1 && rawDay <= 7 ? rawDay - 1 : 0
   const dayISO = toISODate(addDaysUTC(start, offset))
 
-  // try to infer meal_type from the item or fall back to a default
-  // many structures name it as meal_type / slot / type
   const mealType = normalizeMealType(i?.meal_type ?? i?.slot ?? i?.type)
+
+  // recipe: prefer explicit field; otherwise derive from the meal/item name
+  // (NOT NULL in DB, so always provide a string)
+  const recipe =
+    (i?.recipe != null && String(i.recipe).trim() !== '')
+      ? String(i.recipe).slice(0, 200)
+      : String(i?.name ?? 'Untitled recipe').slice(0, 200)
 
   return {
     plan_id: planRow.id,
@@ -124,10 +128,16 @@ export async function POST(req: Request) {
     quantity: Number.isFinite(Number(i?.quantity)) ? Number(i.quantity) : 0,
     unit: i?.unit != null ? String(i.unit).slice(0, 50) : null,
     section: i?.section != null ? String(i.section).slice(0, 50) : null,
-    day: dayISO,            // <-- DATE column (NOT NULL)
-    meal_type: mealType,    // <-- satisfies NOT NULL
+    day: dayISO,          // DATE (NOT NULL)
+    meal_type: mealType,  // TEXT (NOT NULL)
+    recipe,               // TEXT (NOT NULL)
   }
 })
+
+if (items.length) {
+  const { error: itemsErr } = await supabase.from('plan_items').insert(items)
+  if (itemsErr) return fail('insert_plan_items_failed', itemsErr)
+}
 
 if (items.length) {
   const { error: e2 } = await supabase.from('plan_items').insert(items)
@@ -150,5 +160,5 @@ if (items.length) {
 function normalizeMealType(mt: any): 'breakfast' | 'lunch' | 'dinner' | 'snack' {
   const s = String(mt ?? '').trim().toLowerCase()
   if (s === 'breakfast' || s === 'lunch' || s === 'dinner' || s === 'snack') return s
-  return 'dinner' // safe default to satisfy NOT NULL
+  return 'dinner'
 }
