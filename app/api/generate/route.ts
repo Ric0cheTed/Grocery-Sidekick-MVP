@@ -3,46 +3,45 @@ import { NextResponse } from 'next/server'
 import { getSupabaseForRoute } from '@/lib/db'
 import { structuredPlan, type StructuredPlan } from '@/lib/ai'
 
-function jerr(status: number, code: string, details?: any) {
-  // See in Vercel -> Deployments -> Function Logs
+type Json = Record<string, any>
+const ok = (data: Json, status = 200) => NextResponse.json(data, { status })
+const fail = (code: string, details?: any, status = 500) => {
   console.error(`[generate ${code}]`, details ?? '')
   return NextResponse.json({ error: code, details }, { status })
 }
 
 export async function POST(req: Request) {
-  const { supabase, user } = await getSupabaseForRoute(req)
-  if (!user) return jerr(401, 'unauthorized')
-
-  // optional body
+  const url = new URL(req.url)
+  const debug = Number(url.searchParams.get('debug') ?? '0') // 0..4
   let body: any = {}
   try { body = await req.json() } catch {}
 
-  // ---------- Soft quota (won’t 500 if tables don’t exist) ----------
-  let quotaOK = true
-  let usageRow:
-    | { user_id: string; month: string; plans_created: number }
-    | null = null
-  let isoMonth = ''
+  const { supabase, user } = await getSupabaseForRoute(req)
+  if (!user) return fail('unauthorized', null, 401)
 
+  const diag: Json = { step: 'start', debug }
+
+  // ---------- SOFT QUOTA (skip if tables missing) ----------
+  let quotaOK = true
+  let usageRow: { plans_created?: number } | null = null
+  let isoMonth = ''
   try {
-    // Try subscriptions (OK if table missing)
-    const { data: sub, error: subErr } = await supabase
+    const { data: sub } = await supabase
       .from('subscriptions')
       .select('status')
       .eq('user_id', user.id)
       .single()
+      // if the table isn't there, Supabase may throw PGRST error; we catch below
 
-    const isPro = sub?.status === 'pro' // if table missing, sub is undefined
+    const isPro = sub?.status === 'pro'
+    diag.sub = sub ?? null
 
-    // Prepare usage month
     const now = new Date()
-    const monthStartUtc = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
-    )
+    const monthStartUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
     isoMonth = monthStartUtc.toISOString().slice(0, 10)
+    diag.isoMonth = isoMonth
 
-    // Try upsert usage (OK if table missing)
-    let { data: usage, error: upErr } = await supabase
+    let { data: usage } = await supabase
       .from('usage_counters')
       .upsert(
         { user_id: user.id, month: isoMonth },
@@ -51,49 +50,45 @@ export async function POST(req: Request) {
       .select('*')
       .single()
 
-    if ((upErr && upErr.code !== 'PGRST116') || !usage) {
-      // refetch in case of race
+    if (!usage) {
       const ref = await supabase
         .from('usage_counters')
         .select('*')
         .eq('user_id', user.id)
         .eq('month', isoMonth)
         .single()
-      if (!ref.error) usage = ref.data ?? usage
+      usage = ref.data ?? null
     }
 
-    usageRow = usage ?? null
+    usageRow = usage
+    diag.usage = usageRow
 
-    // Enforce cap only if we have the tables available
-    if (!isPro && usageRow && usageRow.plans_created >= 3) {
-      return jerr(
-        402,
-        'quota_exceeded',
-        'Free plan allows 3 plans per month. Upgrade for unlimited.'
-      )
+    if (!isPro && usageRow && (usageRow.plans_created ?? 0) >= 3) {
+      return fail('quota_exceeded', 'Free plan allows 3 plans per month. Upgrade for unlimited.', 402)
     }
-  } catch (e) {
-    // If any of the above tables don’t exist: skip quota silently
+  } catch (e: any) {
+    // If subscriptions/usage_counters don’t exist, continue without quota
     quotaOK = false
-    console.warn('[generate quota_skipped]', (e as any)?.message ?? e)
+    diag.quota_skipped = e?.message ?? String(e)
   }
 
-  // ---------- Build plan data ----------
+  if (debug === 1) return ok({ diag, note: 'stopped at debug=1 (after quota)' })
+
+  // ---------- BUILD PLAN ----------
   const plan: StructuredPlan = await structuredPlan(body)
   const now = new Date()
   const title = (body?.title ?? 'My Weekly Plan').toString()
 
-  // Your schema uses start_date/end_date
+  // your schema: start_date / end_date
   const start = plan.week_start
     ? new Date(plan.week_start + 'T00:00:00Z')
     : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-  const end = new Date(start)
-  end.setUTCDate(start.getUTCDate() + 6)
-
+  const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6)
   const startDateISO = start.toISOString().slice(0, 10)
   const endDateISO = end.toISOString().slice(0, 10)
+  diag.planDates = { startDateISO, endDateISO }
 
-  // ---------- Insert meal_plans ----------
+  // ---------- INSERT meal_plans ----------
   const { data: planRow, error: planInsertErr } = await supabase
     .from('meal_plans')
     .insert({
@@ -106,10 +101,12 @@ export async function POST(req: Request) {
     .single()
 
   if (planInsertErr || !planRow) {
-    return jerr(500, 'insert_plan_failed', planInsertErr ?? 'no plan id')
+    return fail('insert_plan_failed', planInsertErr ?? 'no plan id')
   }
+  diag.planId = planRow.id
+  if (debug === 2) return ok({ diag, note: 'stopped at debug=2 (after plan insert)' })
 
-  // ---------- Insert plan_items ----------
+  // ---------- INSERT plan_items ----------
   const items = (plan.shopping_list ?? []).map((i) => ({
     plan_id: planRow.id,
     name: i.name,
@@ -120,18 +117,23 @@ export async function POST(req: Request) {
 
   if (items.length) {
     const { error: itemsErr } = await supabase.from('plan_items').insert(items)
-    if (itemsErr) return jerr(500, 'insert_plan_items_failed', itemsErr)
+    if (itemsErr) return fail('insert_plan_items_failed', itemsErr)
   }
+  diag.itemsInserted = items.length
+  if (debug === 3) return ok({ diag, note: 'stopped at debug=3 (after items insert)' })
 
-  // ---------- Increment usage if we’re tracking ----------
+  // ---------- INCREMENT usage (if tracking) ----------
   if (quotaOK && usageRow && isoMonth) {
     const { error: usageIncErr } = await supabase
       .from('usage_counters')
       .update({ plans_created: (usageRow.plans_created ?? 0) + 1 })
       .eq('user_id', user.id)
       .eq('month', isoMonth)
-    if (usageIncErr) console.warn('[generate usage_increment_failed]', usageIncErr)
+    if (usageIncErr) diag.usageIncrement = { error: usageIncErr }
+    else diag.usageIncrement = { ok: true }
   }
 
-  return NextResponse.json({ ok: true, id: planRow.id })
+  if (debug === 4) return ok({ diag, note: 'stopped at debug=4 (end of flow)' })
+
+  return ok({ ok: true, id: planRow.id })
 }
