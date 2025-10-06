@@ -1,88 +1,125 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { structuredPlan } from '@/lib/ai'
-import { assembleShoppingList } from '@/lib/shopping'
+// app/api/generate/route.ts
+import { NextResponse } from 'next/server'
 import { getSupabaseForRoute } from '@/lib/db'
+import { structuredPlan, type StructuredPlan } from '@/lib/ai'
 
-// Ephemeral memory store so non-auth/local users can still open a plan page.
-const memory = new Map<string, any>()
-
-export async function POST(req: NextRequest) {
-  const { supabase, user } = await getSupabaseForRoute(req as any)
-  const ai = await structuredPlan({})
-  const shopping = assembleShoppingList(ai)
-  const plan = { ...ai, shopping_list: shopping }
-
-  const hasSupabase = !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  if (hasSupabase && user?.id) {
-    const { data: planRow, error: planErr } = await supabase.from('meal_plans')
-      .insert({ user_id: user.id, week_start: plan.week_start, summary: plan.totals })
-      .select()
-      .single()
-    if (planErr) {
-      // Fall back to memory
-      const id = crypto.randomUUID()
-      memory.set(id, plan)
-      return NextResponse.json({ planId: id, persisted: false, error: planErr.message })
-    }
-
-    // Insert meals
-    const mealRows: any[] = []
-    for (const day of plan.days) {
-      for (const m of day.meals) {
-        mealRows.push({
-          plan_id: planRow.id,
-          day: day.day,
-          slot: m.slot,
-          title: m.title,
-          recipe_json: m,
-        })
-      }
-    }
-    await supabase.from('meals').insert(mealRows)
-
-    // Insert shopping items
-    const items = plan.shopping_list.map((it: any) => ({ plan_id: planRow.id, ...it }))
-    await supabase.from('shopping_items').insert(items)
-
-    return NextResponse.json({ planId: planRow.id, persisted: true })
-  }
-
-  // Not signed in or Supabase not configured: use memory
-  const id = crypto.randomUUID()
-  memory.set(id, plan)
-  return NextResponse.json({ planId: id, persisted: false })
+type GenerateBody = {
+  title?: string
+  // add any preferences you accept from UI here (diet, budget, etc.)
 }
 
-export async function GET(req: NextRequest) {
-  const { supabase, user } = await getSupabaseForRoute(req as any)
-  const url = new URL(req.url)
-  const id = url.searchParams.get('id')
-  if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 })
+export async function POST(req: Request) {
+  const { supabase, user } = await getSupabaseForRoute(req)
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
-  const hasSupabase = !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  if (hasSupabase && user?.id) {
-    const { data: planRow } = await supabase.from('meal_plans').select('*').eq('id', id).maybeSingle()
-    if (planRow) {
-      const { data: meals } = await supabase.from('meals').select('*').eq('plan_id', id).order('day')
-      const { data: items } = await supabase.from('shopping_items').select('*').eq('plan_id', id).order('section')
-      const days: any[] = []
-      for (let d = 1; d <= 7; d++) {
-        const dayMeals = (meals || []).filter(m => m.day === d).map(m => m.recipe_json)
-        days.push({ day: d, meals: dayMeals })
-      }
-      const plan = {
-        week_start: planRow.week_start,
-        days,
-        totals: planRow.summary,
-        shopping_list: (items || []).map(i => ({ name: i.name, quantity: i.quantity, unit: i.unit, section: i.section })),
-      }
-      return NextResponse.json({ plan })
+  // -------- QUOTA CHECK --------
+  const { data: sub } = await supabase
+    .from('subscriptions')
+    .select('status')
+    .eq('user_id', user.id)
+    .single()
+  const isPro = sub?.status === 'pro'
+
+  const now = new Date()
+  const monthStartUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+  const isoMonth = monthStartUtc.toISOString().slice(0, 10)
+
+  // Ensure a usage row exists (idempotent upsert), then read it back
+  let { data: usage, error: usageErr } = await supabase
+    .from('usage_counters')
+    .upsert(
+      { user_id: user.id, month: isoMonth },
+      { onConflict: 'user_id,month', ignoreDuplicates: true }
+    )
+    .select('*')
+    .single()
+
+  if (usageErr && usageErr.code !== 'PGRST116') {
+    // If select failed due to race on first insert, refetch
+    const refetch = await supabase
+      .from('usage_counters')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('month', isoMonth)
+      .single()
+    usage = refetch.data ?? usage
+  }
+
+  if (!isPro && usage && usage.plans_created >= 3) {
+    return NextResponse.json(
+      {
+        error: 'quota_exceeded',
+        message: 'Free plan allows 3 plans per month. Upgrade for unlimited.',
+      },
+      { status: 402 }
+    )
+  }
+  // -------- END QUOTA CHECK --------
+
+  // -------- BUILD PLAN DATA --------
+  let body: GenerateBody = {}
+  try {
+    body = await req.json()
+  } catch {
+    // allow empty body
+  }
+
+  // You can pass `body` into structuredPlan if you want preferences to shape the mock
+  const plan: StructuredPlan = await structuredPlan(body)
+  const title = body.title?.trim() || 'My Weekly Plan'
+
+  // -------- INSERT PLAN ROW --------
+  // ⚠️ Adjust column names if your schema differs.
+  // Assumes meal_plans has: id (uuid), user_id (uuid), title (text), week_start (date), created_at (default now)
+  const { data: planRow, error: insertPlanErr } = await supabase
+    .from('meal_plans')
+    .insert({
+      user_id: user.id,
+      title,
+      week_start: plan.week_start, // (optional) remove if column not present
+    } as any)
+    .select('id')
+    .single()
+
+  if (insertPlanErr || !planRow) {
+    return NextResponse.json(
+      { error: 'insert_failed', details: insertPlanErr?.message },
+      { status: 500 }
+    )
+  }
+
+  // -------- INSERT SHOPPING ITEMS --------
+  // ⚠️ Adjust table/columns if needed.
+  // Assumes shopping_items: plan_id (uuid), name (text), quantity (numeric/int), unit (text/null), section (text/null)
+  const items = (plan.shopping_list ?? []).map((i) => ({
+    plan_id: planRow.id,
+    name: i.name,
+    quantity: i.quantity,
+    unit: i.unit ?? null,
+    section: i.section ?? null,
+  }))
+
+  if (items.length) {
+    const { error: insertItemsErr } = await supabase
+      .from('shopping_items')
+      .insert(items)
+
+    if (insertItemsErr) {
+      // Optionally roll back the plan row here if you want strict integrity
+      return NextResponse.json(
+        { error: 'items_insert_failed', details: insertItemsErr.message },
+        { status: 500 }
+      )
     }
   }
 
-  // Fallback: serve from memory store for local/anon users
-  if (memory.has(id)) {
-    return NextResponse.json({ plan: memory.get(id) })
-  }
-  return NextResponse.json({ error: 'not-found' }, { status: 404 })
+  // -------- QUOTA INCREMENT --------
+  await supabase
+    .from('usage_counters')
+    .update({ plans_created: (usage?.plans_created ?? 0) + 1 })
+    .eq('user_id', user.id)
+    .eq('month', isoMonth)
+  // -------- END QUOTA INCREMENT --------
+
+  return NextResponse.json({ ok: true, id: planRow.id })
 }
