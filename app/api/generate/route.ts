@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server'
 import { getSupabaseForRoute } from '@/lib/db'
 import { structuredPlan, type StructuredPlan } from '@/lib/ai'
 
+export const dynamic = 'force-dynamic'
+
 const ok = (data: any, status = 200) => NextResponse.json(data, { status })
 const fail = (code: string, details?: any, status = 500) => {
   console.error(`[generate ${code}]`, details ?? '')
@@ -90,17 +92,21 @@ export async function POST(req: Request) {
   if (e1 || !planRow) return fail('insert_plan_failed', e1 ?? 'no plan id')
 
   // Insert items
-  const items = (plan.shopping_list ?? []).map(i => ({
-    plan_id: planRow.id,
-    name: i.name,
-    quantity: i.quantity,
-    unit: i.unit ?? null,
-    section: i.section ?? null,
-  }))
-  if (items.length) {
-    const { error: e2 } = await supabase.from('plan_items').insert(items)
-    if (e2) return fail('insert_plan_items_failed', e2)
-  }
+  const items = (plan.shopping_list ?? []).map((i) => ({
+	  plan_id: planRow.id,
+	  // ensure strings, trim to safe lengths (adjust lengths to your column sizes if needed)
+	  name: String(i?.name ?? '').slice(0, 200),
+	  // ensure a numeric value (Postgres numeric/int friendly)
+	  quantity: Number.isFinite(Number(i?.quantity)) ? Number(i.quantity) : 0,
+	  // nulls instead of undefined; keep values short-ish
+	  unit: i?.unit != null ? String(i.unit).slice(0, 50) : null,
+	  section: i?.section != null ? String(i.section).slice(0, 50) : null,
+	}))
+
+	if (items.length) {
+	  const { error: itemsErr } = await supabase.from('plan_items').insert(items)
+	  if (itemsErr) return fail('insert_plan_items_failed', itemsErr)
+	}
 
   // Increment usage if we can track
   if (trackUsage) {
