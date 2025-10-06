@@ -2,13 +2,28 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseForRoute } from '@/lib/db'
 
+type CsvCell = string | number | null | undefined
+type CsvRow = CsvCell[]
+
+function toCsv(rows: CsvRow[]): string {
+  return rows
+    .map((row: CsvRow) =>
+      row
+        .map((cell: CsvCell) => `"${String(cell ?? '').replace(/"/g, '""')}"`)
+        .join(',')
+    )
+    .join('\n')
+}
+
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   const { supabase, user } = await getSupabaseForRoute(req)
   if (!user) return NextResponse.json({ error: 'auth' }, { status: 401 })
 
   const { data: plan, error } = await supabase
     .from('meal_plans')
-    .select('id, title, start_date, end_date, created_at, plan_items(name, quantity, unit, section)')
+    .select(
+      'id, title, start_date, end_date, created_at, plan_items(name, quantity, unit, section)'
+    )
     .eq('id', params.id)
     .eq('user_id', user.id)
     .single()
@@ -21,13 +36,18 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   const format = searchParams.get('format')
 
   if (format === 'csv') {
-    const rows = [
+    const rows: CsvRow[] = [
       ['Name', 'Quantity', 'Unit', 'Section'],
-      ...((plan as any).plan_items ?? []).map((i: any) => [
-        i.name, i.quantity, i.unit ?? '', i.section ?? ''
-      ])
+      ...(((plan as any).plan_items ?? []) as Array<{
+        name: string
+        quantity: number
+        unit?: string | null
+        section?: string | null
+      }>).map((i) => [i.name, i.quantity, i.unit ?? '', i.section ?? '']),
     ]
-    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n')
+
+    const csv = toCsv(rows)
+
     return new NextResponse(csv, {
       headers: {
         'content-type': 'text/csv; charset=utf-8',
@@ -36,5 +56,6 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     })
   }
 
+  // Default JSON payload
   return NextResponse.json(plan)
 }
