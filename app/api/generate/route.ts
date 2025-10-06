@@ -94,13 +94,15 @@ export async function POST(req: Request) {
   // Insert items
   const items = (plan.shopping_list ?? []).map((i) => ({
 	  plan_id: planRow.id,
-	  // ensure strings, trim to safe lengths (adjust lengths to your column sizes if needed)
 	  name: String(i?.name ?? '').slice(0, 200),
-	  // ensure a numeric value (Postgres numeric/int friendly)
 	  quantity: Number.isFinite(Number(i?.quantity)) ? Number(i.quantity) : 0,
-	  // nulls instead of undefined; keep values short-ish
 	  unit: i?.unit != null ? String(i.unit).slice(0, 50) : null,
 	  section: i?.section != null ? String(i.section).slice(0, 50) : null,
+	  // NEW: satisfy NOT NULL constraint in your schema
+	  day:
+		typeof (i as any).day === 'number' && (i as any).day >= 1 && (i as any).day <= 7
+		  ? (i as any).day
+		  : 1,
 	}))
 
 	if (items.length) {
